@@ -6,6 +6,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Matrix;
 import android.media.ExifInterface;
+import android.media.MediaMetadata;
 import android.media.MediaMetadataRetriever;
 import android.net.Uri;
 import android.os.Handler;
@@ -16,7 +17,6 @@ import android.util.Size;
 
 import com.hw.videoprocessor.VideoProcessor;
 import com.nemocdz.imagecompress.ImageCompress;
-import com.nemocdz.imagecompress.ImageCompressKt;
 import com.sangcomz.fishbun.bean.Media;
 
 import java.io.BufferedInputStream;
@@ -33,6 +33,8 @@ import java.util.List;
 import java.util.UUID;
 
 import top.zibin.luban.Luban;
+
+import static android.media.ExifInterface.TAG_USER_COMMENT;
 
 public class MediaCompress {
 
@@ -174,10 +176,7 @@ public class MediaCompress {
         }else {
             File tmpPic = new File(cacheDir + imgName + "." + UUID.randomUUID().toString());
             HashMap picInfo = localVideoThumb(media, tmpPic.getAbsolutePath());
-            if (!tmpPic.renameTo(targetPic)) {
-                copyFile(tmpPic, targetPic);
-                tmpPic.delete();
-            }
+            moveFile(tmpPic, targetPic);
             media.setThumbnailHeight((String) picInfo.get("height"));
             media.setThumbnailWidth((String) picInfo.get("width"));
             media.setThumbnailName(imgName);
@@ -202,10 +201,7 @@ public class MediaCompress {
                             bitrate(compressBitrate).process();
                 }
                 if (tmpVideo.exists()) {
-                    if (!tmpVideo.renameTo(targetVideo)) {
-                        copyFile(tmpVideo, targetVideo);
-                        tmpVideo.delete();
-                    };
+                    moveFile(tmpVideo, targetVideo);
                 }else {
                     HashMap info = new HashMap();
                     info.put("identifier", media.getIdentifier());
@@ -290,6 +286,54 @@ public class MediaCompress {
         return Math.max(MinVideoBitRate, result);
     }
 
+    private boolean isFanbookMarked(String path, boolean isThumb) {
+        try {
+            ExifInterface ei = new ExifInterface(path);
+            String mark = ei.getAttribute(ExifInterface.TAG_USER_COMMENT);
+            String[] info = mark.split("-");
+            if (info.length == 3) {
+                String version = info[1];
+                String thumb = info[2];
+                if (!version.equalsIgnoreCase("1.0.0")) {
+                    return  false;
+                }
+                if (isThumb && thumb.equalsIgnoreCase("origin")) {
+                    return false;
+                }else {
+                    return  true;
+                }
+            }else {
+                return false;
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return false;
+    }
+
+    private void markFanbookVideo(String path) {
+        MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+        try {
+            retriever.setDataSource(path);
+        }catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void markFanbookPic(String path, boolean thumb) {
+        try {
+            ExifInterface ei = new ExifInterface(path);
+            ei.setAttribute(ExifInterface.TAG_USER_COMMENT, fanbookMarkString("fanbook", "1.0.0", thumb));
+            ei.saveAttributes();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private  String fanbookMarkString(String appName, String version, boolean thumb) {
+        return appName + "-" + version + "-" + (thumb ? "thumb" : "origin");
+    }
+
     private HashMap fetchImageThumb(Media media, boolean thumb) {
         long fileSize = 0;
         try {
@@ -332,10 +376,7 @@ public class MediaCompress {
                         checkPic.createNewFile();
                         fileByteArrayToFile(checkPic.getAbsolutePath(), checkFileByteArray);
 
-                        if (!tmpPic.renameTo(targetPic)) {
-                            copyFile(tmpPic, targetPic);
-                            tmpPic.delete();
-                        }
+                        moveFile(tmpPic, targetPic);
                     }
                 }
             } catch (Exception e) {
@@ -409,10 +450,7 @@ public class MediaCompress {
                     if (media.getOriginPath().equals(compressPicFile.getAbsolutePath())) {
                         copyFile(compressPicFile, targetPic);
                     }else {
-                        if (!compressPicFile.renameTo(targetPic)) {
-                            copyFile(compressPicFile, targetPic);
-                            compressPicFile.delete();
-                        }
+                        moveFile(compressPicFile, targetPic);
                     }
                     map.put("width", imageWidth);
                     map.put("height", imageHeight);
@@ -501,6 +539,19 @@ public class MediaCompress {
             e.printStackTrace();
         }
         return bytes;
+    }
+
+    private void moveFile(String srcFilePath, String dstFilePath) {
+        File srcFile = new File(srcFilePath);
+        File dstFile = new File(dstFilePath);
+        moveFile(srcFile, dstFile);
+    }
+
+    private void moveFile(File srcFile, File dstFile) {
+        if (!srcFile.renameTo(dstFile)) {
+            copyFile(srcFile, dstFile);
+            srcFile.delete();
+        }
     }
 
     private File compressImage(File fromFile, File toFile, double width, double height, int quality) {
