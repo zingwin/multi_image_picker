@@ -32,6 +32,21 @@ public class SwiftMultiImagePickerPlugin: NSObject, FlutterPlugin, UIAlertViewDe
         registrar.addMethodCallDelegate(instance, channel: channel)
     }
 
+    func topViewController(controller: UIViewController? = UIApplication.shared.keyWindow?.rootViewController) -> UIViewController? {
+         if let navigationController = controller as? UINavigationController {
+             return topViewController(controller: navigationController.visibleViewController)
+         }
+         if let tabController = controller as? UITabBarController {
+             if let selected = tabController.selectedViewController {
+                 return topViewController(controller: selected)
+             }
+         }
+         if let presented = controller?.presentedViewController {
+             return topViewController(controller: presented)
+         }
+         return controller
+     }
+
     public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         switch (call.method) {
         case "requestMediaData":
@@ -57,7 +72,7 @@ public class SwiftMultiImagePickerPlugin: NSObject, FlutterPlugin, UIAlertViewDe
                     let asset = assets.object(at: index)
                     var compressing = true
                     asset.compressAsset(thumb, saveDir: thumbDir, process: { (process) in
-                        
+
                     }, failed: { (err) in
                         results.append(err.userInfo as NSDictionary)
                         compressing = false
@@ -97,12 +112,12 @@ public class SwiftMultiImagePickerPlugin: NSObject, FlutterPlugin, UIAlertViewDe
                     }
                 }
                 var results = [NSDictionary]();
-                
+
                 for index in 0 ..< selectedAssets.count {
                     let asset = selectedAssets[index]
                     var compressing = true
                     MediaCompress().compressAsset(thumb, fileType: fileType, originPath: asset, saveDir: thumbDir) { (process) in
-                        
+
                     } failed: { (err) in
                         results.append(err.userInfo as NSDictionary)
                         compressing = false
@@ -144,7 +159,7 @@ public class SwiftMultiImagePickerPlugin: NSObject, FlutterPlugin, UIAlertViewDe
             weak var weakSelf = self
             DispatchQueue.global().async {
                 let medias = NSMutableArray()
-                
+
                 let fetchOptions = PHFetchOptions()
                 let cameraRollResult = PHAssetCollection.fetchAssetCollections(with: .smartAlbum, subtype: .smartAlbumUserLibrary, options: fetchOptions)
                 let fetchResult = selectedAssets.count > 0 ? PHAsset.fetchAssets(withLocalIdentifiers: selectedAssets, options: nil) :
@@ -197,7 +212,7 @@ public class SwiftMultiImagePickerPlugin: NSObject, FlutterPlugin, UIAlertViewDe
                 imageRequestOptions.resizeMode = .fast
                 imageRequestOptions.isSynchronous = false
                 let imageContentMode: PHImageContentMode = .aspectFill
-                
+
                 if let asset = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil).firstObject {
                     PHCachingImageManager.default().requestImage(for: asset, targetSize: weakSelf?.getThumbnailSize(originSize: CGSize(width: CGFloat(asset.pixelWidth), height: CGFloat(asset.pixelHeight))) ?? CGSize(width: asset.pixelWidth/2, height: asset.pixelHeight/2), contentMode: imageContentMode, options: imageRequestOptions) { (image, info) in
                         result(image?.jpegData(compressionQuality: 0.8) ?? FlutterError(code: "REQUEST FAILED", message: "image request failed \(localIdentifier)", details: nil))
@@ -240,7 +255,7 @@ public class SwiftMultiImagePickerPlugin: NSObject, FlutterPlugin, UIAlertViewDe
             if (status == PHAuthorizationStatus.denied) {
                 return result(FlutterError(code: "PERMISSION_PERMANENTLY_DENIED", message: "The user has denied the gallery access.", details: nil))
             }
-            
+
             let arguments = call.arguments as! Dictionary<String, AnyObject>
             let maxImages = (arguments["maxImages"] as? Int) ?? 9
             let options = (arguments["iosOptions"] as? Dictionary<String, String>) ?? Dictionary<String, String>()
@@ -250,7 +265,7 @@ public class SwiftMultiImagePickerPlugin: NSObject, FlutterPlugin, UIAlertViewDe
             let selectType = (arguments["mediaSelectTypes"] as? String) ?? ""
             let showType = (arguments["mediaShowTypes"] as? String) ?? ""
             let doneButtonText = (arguments["doneButtonText"] as? String) ?? ""
-            
+
             DataCenter.shared.resetAllData()
             let settings = DataCenter.shared.settings
             settings.maxNumberOfSelections = maxImages
@@ -273,7 +288,7 @@ public class SwiftMultiImagePickerPlugin: NSObject, FlutterPlugin, UIAlertViewDe
             if let selectionCharacter = options["selectionCharacter"] , !selectionCharacter.isEmpty {
                 settings.selectionCharacter = Character(selectionCharacter)
             }
-            
+
             DataCenter.shared.defaultSelectMedia = defaultAsset
             DataCenter.shared.updateSelectMedias(selectMedias: selectedAssets)
             switch showType {
@@ -286,7 +301,7 @@ public class SwiftMultiImagePickerPlugin: NSObject, FlutterPlugin, UIAlertViewDe
             default:
                 DataCenter.shared.mediaShowTypes = [.image, .video]
             }
-            
+
             weak var weakSelf = self
             BSImagePickerViewController.authorize(fromViewController: controller) { (authorized) -> Void in
                 // Make sure we are authorized before proceding
@@ -303,12 +318,14 @@ public class SwiftMultiImagePickerPlugin: NSObject, FlutterPlugin, UIAlertViewDe
                 DataCenter.shared.finishClosure = { (assets: NSDictionary, success : Bool, error : NSError) -> Void in
                     success ? result(assets) : result(FlutterError(code: "\(error.code)", message: error.domain, details: nil))
                 }
-                
+
                 let imagePicker = BSImagePickerViewController()
                 imagePicker.modalPresentationStyle = .fullScreen
                 imagePicker.navigationBar.barStyle = .blackTranslucent
                 imagePicker.toolbar.barStyle = .blackTranslucent
-                weakSelf?.controller.present(imagePicker, animated: true, completion: nil)
+//                weakSelf?.controller.present(imagePicker, animated: true, completion: nil)
+                let topVC = weakSelf?.topViewController()
+                topVC?.present(imagePicker, animated: true, completion: nil)
             }
             break;
         case "cachedVideoPath":
