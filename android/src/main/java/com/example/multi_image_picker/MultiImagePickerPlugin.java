@@ -9,6 +9,7 @@ import android.text.TextUtils;
 
 
 import androidx.core.content.ContextCompat;
+import androidx.annotation.NonNull;
 
 import com.sangcomz.fishbun.FishBun;
 import com.sangcomz.fishbun.FishBunCreator;
@@ -35,22 +36,28 @@ import io.flutter.plugin.common.MethodChannel.MethodCallHandler;
 import io.flutter.plugin.common.MethodChannel.Result;
 import io.flutter.plugin.common.PluginRegistry;
 import io.flutter.plugin.common.PluginRegistry.Registrar;
+import io.flutter.app.FlutterApplication;
+import io.flutter.embedding.engine.plugins.FlutterPlugin;
+import io.flutter.embedding.engine.plugins.activity.ActivityAware;
+import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding;
 
 
 /**
  * MultiImagePickerPlugin
  */
-public class MultiImagePickerPlugin implements  MethodCallHandler, PluginRegistry.ActivityResultListener {
+public class MultiImagePickerPlugin implements  FlutterPlugin, ActivityAware,MethodCallHandler, PluginRegistry.ActivityResultListener {
     private static final String CHANNEL_NAME = "multi_image_picker";
     private static final String FETCH_MEDIA_THUMB_DATA = "fetchMediaThumbData";
     private static final String FETCH_MEDIA_INFO = "fetchMediaInfo";
     private static final String REQUEST_MEDIA_DATA = "requestMediaData";
     private static final String REQUEST_COMPRESS_MEDIA = "requestCompressMedia";
     private static final String REQUEST_TAKE_PICTURE = "requestTakePicture";
+    private static final String REQUEST_FILE_PATH = "requestFilePath";
     private static final String REQUEST_FILE_SIZE = "requestFileSize";
     private static final String REQUEST_FILE_DIMEN = "requestFileDimen";
     private static final String REQUEST_THUMB_DIRECTORY = "requestThumbDirectory";
     private static final String FETCH_CACHED_VIDEO_PATH = "cachedVideoPath";
+    private static final String FETCH_CACHED_VIDEO_Directory = "cachedVideoDirectory";
     private static final String PICK_IMAGES = "pickImages";
     private static final String MAX_IMAGES = "maxImages";
     private static final String THUMB = "thumb";
@@ -67,25 +74,22 @@ public class MultiImagePickerPlugin implements  MethodCallHandler, PluginRegistr
     private static final String THEME_COLOR = "themeColor";
     private static final String PERMISSIONERROR = "PERMISSION_PERMANENTLY_DENIED";
     private static final String PERMISSIONDESC = "NO PERMISSION";
+    private static final String GETFAILD = "GET FAILED";
     private static final int REQUEST_CODE_CHOOSE = 1001;
     private static final int REQUEST_CODE_TAKE = 1002;
-    private final Activity activity;
-    private final Context context;
+    private Activity activity;
+    private Context context;
+    private MethodChannel channel;
     private static Result currentPickerResult;
-
-    public MultiImagePickerPlugin(Activity activity, Context context) {
-        this.activity = activity;
-        this.context = context;
-    }
 
     /**
      * Plugin registration.
      */
-    public static void registerWith(Registrar registrar) {
-        final MethodChannel channel = new MethodChannel(registrar.messenger(), CHANNEL_NAME);
-        MultiImagePickerPlugin instance = new MultiImagePickerPlugin(registrar.activity(), registrar.context());
-        registrar.addActivityResultListener(instance);
-        channel.setMethodCallHandler(instance);
+    @Override
+    public void onAttachedToEngine(@NonNull FlutterPluginBinding flutterPluginBinding) {
+        channel = new MethodChannel(flutterPluginBinding.getBinaryMessenger(), CHANNEL_NAME);
+        channel.setMethodCallHandler(this);
+        context = flutterPluginBinding.getApplicationContext();
     }
 
     boolean checkPermission(boolean checkCamera, boolean checkRecord, boolean checkStorage) {
@@ -108,6 +112,27 @@ public class MultiImagePickerPlugin implements  MethodCallHandler, PluginRegistr
     }
 
     @Override
+    public void onAttachedToActivity(@NonNull ActivityPluginBinding binding) {
+        activity = binding.getActivity();
+        binding.addActivityResultListener(this);
+    }
+
+    @Override
+    public void onDetachedFromActivityForConfigChanges() {
+        onDetachedFromActivity();
+    }
+
+    @Override
+    public void onReattachedToActivityForConfigChanges(@NonNull ActivityPluginBinding binding) {
+        onAttachedToActivity(binding);
+    }
+
+    @Override
+    public void onDetachedFromActivity() {
+        activity = null;
+    }
+
+    @Override
     public void onMethodCall(final MethodCall call, final Result result) {
         try {
             switch (call.method) {
@@ -117,23 +142,7 @@ public class MultiImagePickerPlugin implements  MethodCallHandler, PluginRegistr
                             currentPickerResult.error("TIME OUT NEW PICKER COME IN", "", null);
                         }
                         currentPickerResult = result;
-                        final HashMap<String, String> options = call.argument(ANDROID_OPTIONS);
-                        int maxImages = call.argument(MAX_IMAGES);
-                        boolean thumb = call.argument(THUMB);
-                        ArrayList<String> selectMedias = call.argument(SELECTED_ASSETS);
-                        selectMedias = selectMedias == null ? new ArrayList<String>() : selectMedias;
-                        String defaultAsset = call.argument(DEFAULT_ASSETS);
-                        defaultAsset = TextUtils.isEmpty(defaultAsset) ? "" : defaultAsset;
-
-                        String selectType = call.argument(SELECT_TYPE);
-                        selectType = TextUtils.isEmpty(selectType) ? "" : selectType;
-                        String doneButtonText = call.argument(DONE_BUTTON_TEXT);
-                        doneButtonText = TextUtils.isEmpty(doneButtonText) ? "" : doneButtonText;
-
-                        String showMediaType = call.argument(MEDIA_SHOW_TYPES);
-                        showMediaType = TextUtils.isEmpty(showMediaType) ? "" : showMediaType;
-
-                        presentPicker(maxImages, thumb, defaultAsset, doneButtonText, selectType, showMediaType, selectMedias, options);
+                        presentPicker(call);
                     }else {
                         if (currentPickerResult != null) {
                             currentPickerResult.error(PERMISSIONERROR, PERMISSIONDESC, null);
@@ -165,6 +174,28 @@ public class MultiImagePickerPlugin implements  MethodCallHandler, PluginRegistr
                     }else {
                         result.error(PERMISSIONERROR, PERMISSIONDESC, null);
                     }
+                    break;
+                }
+                case REQUEST_FILE_PATH:{
+                    String identify = call.argument(IDENTIFY);
+                    ArrayList<String> selectMedias = new ArrayList<>();
+                    selectMedias.add(identify);
+                    DisplayImage displayImage = new DisplayImage((long) 0, selectMedias, "all", activity);
+                    displayImage.setRequestHashMap(true);
+                    displayImage.setRequestVideoDimen(false);
+                    displayImage.setListener(new DisplayImage.DisplayImageListener() {
+                        @Override
+                        public void OnDisplayImageDidSelectFinish(ArrayList medias) {
+                            if (medias.size() > 0) {
+                                HashMap hashMap = new HashMap();
+                                hashMap.put("filePath", ((HashMap) medias.get(0)).get("filePath"));
+                                result.success(hashMap);
+                            }else {
+                                result.error(GETFAILD, GETFAILD, "get media failed");
+                            }
+                        }
+                    });
+                    displayImage.execute();
                     break;
                 }
                 case REQUEST_TAKE_PICTURE: {
@@ -297,6 +328,15 @@ public class MultiImagePickerPlugin implements  MethodCallHandler, PluginRegistr
                     }
                     break;
                 }
+                case FETCH_CACHED_VIDEO_Directory:{
+                    try{
+                        File file = new File(context.getExternalCacheDir(), "video-cache");
+                        result.success(file.getAbsolutePath());
+                    }catch (Exception e) {
+                        result.success("");
+                    }
+                    break;
+                }
             }
         } catch (Exception e) {
             if (currentPickerResult != null) {
@@ -325,7 +365,23 @@ public class MultiImagePickerPlugin implements  MethodCallHandler, PluginRegistr
                 url.substring(dotIndex + 1, url.length()) : "";
     }
 
-    private void presentPicker(int maxImages, boolean thumb, String defaultAsset, String doneButtonText, String selectType, String showType, ArrayList<String> selectMedias, HashMap<String, String> options) {
+    private void presentPicker(MethodCall call) {
+        final HashMap<String, String> options = call.argument(ANDROID_OPTIONS);
+        int maxImages = call.argument(MAX_IMAGES);
+        String thumb = call.argument(THUMB);
+        ArrayList<String> selectMedias = call.argument(SELECTED_ASSETS);
+        selectMedias = selectMedias == null ? new ArrayList<String>() : selectMedias;
+        String defaultAsset = call.argument(DEFAULT_ASSETS);
+        defaultAsset = TextUtils.isEmpty(defaultAsset) ? "" : defaultAsset;
+
+        String selectType = call.argument(SELECT_TYPE);
+        selectType = TextUtils.isEmpty(selectType) ? "" : selectType;
+        String doneButtonText = call.argument(DONE_BUTTON_TEXT);
+        doneButtonText = TextUtils.isEmpty(doneButtonText) ? "" : doneButtonText;
+
+        String showMediaType = call.argument(MEDIA_SHOW_TYPES);
+        showMediaType = TextUtils.isEmpty(showMediaType) ? "" : showMediaType;
+
         String actionBarTitle = options.get("actionBarTitle");
         String allViewTitle =  options.get("allViewTitle");
         String selectCircleStrokeColor = options.get("selectCircleStrokeColor");
@@ -337,11 +393,12 @@ public class MultiImagePickerPlugin implements  MethodCallHandler, PluginRegistr
         FishBunCreator fishBun = FishBun.with(MultiImagePickerPlugin.this.activity)
                 .setImageAdapter(new GlideAdapter())
                 .setMaxCount(maxImages)
-                .setThumb(thumb)
+                .setThumb(thumb.equalsIgnoreCase("thumb"))
+                .setHiddenThumb(thumb.equalsIgnoreCase("file"))
                 .setPreSelectMedia(defaultAsset)
                 .setPreSelectMedias(selectMedias)
                 .setRequestCode(REQUEST_CODE_CHOOSE)
-                .setShowMediaType(showType)
+                .setShowMediaType(showMediaType)
                 .setSelectType(selectType)
                 .setDoneButtonText(doneButtonText);
 
@@ -439,5 +496,10 @@ public class MultiImagePickerPlugin implements  MethodCallHandler, PluginRegistr
             }
             return true;
         }
+    }
+
+    @Override
+    public void onDetachedFromEngine(@NonNull FlutterPluginBinding binding) {
+        channel.setMethodCallHandler(null);
     }
 }

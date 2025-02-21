@@ -3,6 +3,7 @@ package com.nemocdz.imagecompress
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.util.Size
 import com.bumptech.glide.Glide
 import com.bumptech.glide.gifdecoder.GifHeaderParser
 import com.bumptech.glide.gifdecoder.StandardGifDecoder
@@ -200,19 +201,95 @@ object ImageCompress {
     }
 
     /**
+     * 计算不同编码格式图片，可占用内存的大小(粗略)
+     */
+    private fun imageInMemorySize(width: Int,  height: Int,  frameCount: Int, bitConfig: Bitmap.Config ): Int{
+//        ALPHA_8 -- (1B)
+//        RGB_565 -- (2B)
+//        ARGB_4444 -- (2B)
+//        ARGB_8888 -- (4B)
+//        RGBA_F16 -- (8B)
+        if(bitConfig == Bitmap.Config.ALPHA_8){
+            return width * height * frameCount *1;
+        }else if(bitConfig == Bitmap.Config.RGB_565){
+            return width * height * frameCount *2;
+        }
+        return width * height * frameCount *4;
+    }
+
+    /**
+     * 如果图片（gif）加载到内存中占用内存大于100M, 那么降低图片的尺寸
+     */
+    private const val maxMemoryReSize = 104857600; // 100M
+    private fun resetGifCheckSize(width: Int,  height: Int,  frameCount: Int, bitConfig: Bitmap.Config): Size{
+        val mSize = imageInMemorySize(width, height, frameCount, bitConfig);
+        if(mSize > maxMemoryReSize){
+            var w = width / 3;
+            var h = height / 3;
+            do {
+                //压缩到占用内存50M就退出
+                if(imageInMemorySize(w, h, frameCount, bitConfig) < 50 * 1024 * 1024){
+                    break
+                }else{
+                    w /= 3;
+                    h /= 3;
+                }
+            }while (true)
+            return  Size(w, h);
+        }
+        return  Size(0,0);
+    }
+
+    /*
+    针对gif的尺寸进行压缩
+     */
+    private const val minSizeConstraint = 48.0;
+    private const val maxSizeConstraint = 225.0;
+    private fun resetGifOriginalSize(width: Int, height: Int): Size{
+        var targetWidth = 0.0;
+        var targetHeight = 0.0;
+        val devicePixelRatio = 2; //屏幕密度
+        if (width / height > (maxSizeConstraint / minSizeConstraint)) {
+            // 横线长图
+            targetWidth = maxSizeConstraint;
+            targetHeight = minSizeConstraint;
+        } else if (height / width > (maxSizeConstraint / minSizeConstraint)) {
+            // 纵向长图
+            targetWidth = minSizeConstraint;
+            targetHeight = maxSizeConstraint;
+        } else if (width >= maxSizeConstraint || height >= maxSizeConstraint) {
+            val s = min(maxSizeConstraint / width, maxSizeConstraint / height);
+            targetWidth = width * s;
+            targetHeight = height * s;
+        } else if (width < minSizeConstraint || height < minSizeConstraint) {
+            val s = max(minSizeConstraint / width, minSizeConstraint / height);
+            targetWidth = width * s;
+            targetHeight = height * s;
+        }
+        return  Size(targetWidth.toInt() * devicePixelRatio, targetHeight.toInt() * devicePixelRatio);
+    }
+
+    /**
      * 返回同步压缩 gif 图片 Byte 数据 [rawData] 的按 [sampleCount] 采样后的 Byte 数据
      */
     fun compressGifDataWithSampleCount(context: Context, rawData: ByteArray, sampleCount: Int): ByteArray? {
-        if (sampleCount <= 1) {
-            return rawData
-        }
+//        if (sampleCount <= 1) {
+//            return rawData
+//        }
         val gifDecoder = StandardGifDecoder(GifBitmapProvider(Glide.get(context).bitmapPool))
+        gifDecoder.setDefaultBitmapConfig(Bitmap.Config.ARGB_8888)
         val headerParser = GifHeaderParser()
         headerParser.setData(rawData)
         val header = headerParser.parseHeader()
         gifDecoder.setData(header, rawData)
 
         val frameCount = gifDecoder.frameCount
+
+        var reSize = if(sampleCount == 1){
+            resetGifOriginalSize(header.width, header.height);
+        }else{
+            resetGifCheckSize(header.width, header.height, frameCount, Bitmap.Config.ARGB_8888);
+        }
 
         // 计算帧的间隔
         val frameDurations = (0 until frameCount).map { gifDecoder.getDelay(it) }
@@ -233,6 +310,10 @@ object ImageCompress {
             var imageFrame: Bitmap? = null
             if (it % sampleCount == 0) {
                 imageFrame = gifDecoder.nextFrame
+                if(imageFrame != null && reSize.width != 0 ){
+                    imageFrame = Bitmap.createScaledBitmap(imageFrame, reSize.width, reSize.height, true)
+                }
+
             }
             imageFrame
         }

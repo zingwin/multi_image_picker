@@ -1,6 +1,7 @@
 import Flutter
 import UIKit
 import Photos
+import KTVHTTPCache
 
 public class SwiftMultiImagePickerPlugin: NSObject, FlutterPlugin, UIAlertViewDelegate {
     var controller: UIViewController!
@@ -164,12 +165,9 @@ public class SwiftMultiImagePickerPlugin: NSObject, FlutterPlugin, UIAlertViewDe
                 let cameraRollResult = PHAssetCollection.fetchAssetCollections(with: .smartAlbum, subtype: .smartAlbumUserLibrary, options: fetchOptions)
                 let fetchResult = selectedAssets.count > 0 ? PHAsset.fetchAssets(withLocalIdentifiers: selectedAssets, options: nil) :
                     (cameraRollResult.firstObject != nil ? PHAsset.fetchAssets(in: cameraRollResult.firstObject!, options: nil) : PHAsset.fetchAssets(with: nil))
-                var assets : Array<PHAsset> = []
-                fetchResult.enumerateObjects(options: [.reverse]) { (asset, index, pt) in
-                    assets.append(asset)
-                }
+                let resultCount = fetchResult.count;
                 if limit == -1, offset == -1 {
-                    limit = assets.count
+                    limit = resultCount
                     offset = 0
                 }else if limit < -1 {
                     result(FlutterError(code: "PARAM ERROR", message: "limit must cannot be \(limit)", details: nil))
@@ -178,26 +176,32 @@ public class SwiftMultiImagePickerPlugin: NSObject, FlutterPlugin, UIAlertViewDe
                     result(FlutterError(code: "PARAM ERROR", message: "offset must cannot be \(offset)", details: nil))
                     return
                 }
-                for i in offset ..< min((limit + offset), assets.count) {
-                    let asset = assets[i]
-                    let size = weakSelf?.getThumbnailSize(originSize: CGSize(width: asset.pixelWidth, height: asset.pixelHeight)) ?? CGSize(width: asset.pixelWidth/2, height: asset.pixelHeight/2)
-                    let dictionary = NSMutableDictionary()
-                    dictionary.setValue(asset.localIdentifier, forKey: "identifier")
-                    dictionary.setValue("", forKey: "filePath")
-                    dictionary.setValue(CGFloat(size.width), forKey: "width")
-                    dictionary.setValue(CGFloat(size.height), forKey: "height")
-                    dictionary.setValue(asset.originalFilename, forKey: "name")
-                    dictionary.setValue(asset.duration, forKey: "duration")
-                    if asset.mediaType == .video {
-                        dictionary.setValue("video", forKey: "fileType")
-                    }else if asset.mediaType == .image {
-                      if let uti = asset.value(forKey: "uniformTypeIdentifier"), uti is String, (uti as! String).contains("gif") {
-                          dictionary.setValue("image/gif", forKey: "fileType")
-                      }else {
-                          dictionary.setValue("image/jpeg", forKey: "fileType")
-                      }
+//                fetchResult不能倒序，所以在for循环的时候倒序
+                let from = resultCount - offset - 1
+                let through = resultCount - offset - limit
+                if from >= 0, from >= through {
+                    for i in stride(from: from, through:max(through, 0), by:-1)  {
+                        if (i >= resultCount || i < 0) {continue}
+                        let asset = fetchResult.object(at: i)
+                        let size = weakSelf?.getThumbnailSize(originSize: CGSize(width: asset.pixelWidth, height: asset.pixelHeight)) ?? CGSize(width: asset.pixelWidth/2, height: asset.pixelHeight/2)
+                        let dictionary = NSMutableDictionary()
+                        dictionary.setValue(asset.localIdentifier, forKey: "identifier")
+                        dictionary.setValue("", forKey: "filePath")
+                        dictionary.setValue(CGFloat(size.width), forKey: "width")
+                        dictionary.setValue(CGFloat(size.height), forKey: "height")
+                        dictionary.setValue(asset.originalFilename, forKey: "name")
+                        dictionary.setValue(asset.duration, forKey: "duration")
+                        if asset.mediaType == .video {
+                            dictionary.setValue("video", forKey: "fileType")
+                        }else if asset.mediaType == .image {
+                          if let uti = asset.value(forKey: "uniformTypeIdentifier"), uti is String, (uti as! String).contains("gif") {
+                              dictionary.setValue("image/gif", forKey: "fileType")
+                          }else {
+                              dictionary.setValue("image/jpeg", forKey: "fileType")
+                          }
+                        }
+                        medias.add(dictionary)
                     }
-                    medias.add(dictionary)
                 }
                 result(medias)
             }
@@ -223,6 +227,24 @@ public class SwiftMultiImagePickerPlugin: NSObject, FlutterPlugin, UIAlertViewDe
             }
         case "requestThumbDirectory":
             result((NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).last ?? NSTemporaryDirectory()) + "/multi_image_pick/thumb/")
+        case "requestFilePath":
+            let arguments = call.arguments as! Dictionary<String, AnyObject>
+            let localIdentifier = (arguments["identifier"] as? String) ?? ""
+            DispatchQueue.global().async {
+                if let asset = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil).firstObject {
+                    asset.requestContentEditingInput(with: nil) { input, _ in
+                        if asset.mediaType == .video {
+                            result(["filePath" : (input?.audiovisualAsset as? AVURLAsset)?.url.path ?? ""])
+                        }else if asset.mediaType == .image {
+                            result(["filePath" : input?.fullSizeImageURL?.path ?? ""])
+                        }else {
+                            result(FlutterError(code: "ASSET TYPE", message: "asset type failed \(localIdentifier)", details: nil))
+                        }
+                    }
+                }else {
+                    result(FlutterError(code: "REQUEST FAILED", message: "image request failed \(localIdentifier)", details: nil))
+                }
+            }
         case "requestTakePicture":
             let arguments = call.arguments as! Dictionary<String, AnyObject>
             let themeColor = (arguments["themeColor"] as? String) ?? "#ff6179f2"
@@ -261,7 +283,7 @@ public class SwiftMultiImagePickerPlugin: NSObject, FlutterPlugin, UIAlertViewDe
             let options = (arguments["iosOptions"] as? Dictionary<String, String>) ?? Dictionary<String, String>()
             let defaultAsset = (arguments["defaultAsset"] as? String) ?? ""
             let selectedAssets = (arguments["selectedAssets"] as? Array<String>) ?? [];
-            let thumb = (arguments["thumb"] as? Bool) ?? true
+            let thumb = (arguments["thumb"] as? String) ?? ""
             let selectType = (arguments["mediaSelectTypes"] as? String) ?? ""
             let showType = (arguments["mediaShowTypes"] as? String) ?? ""
             let doneButtonText = (arguments["doneButtonText"] as? String) ?? ""
@@ -269,7 +291,8 @@ public class SwiftMultiImagePickerPlugin: NSObject, FlutterPlugin, UIAlertViewDe
             DataCenter.shared.resetAllData()
             let settings = DataCenter.shared.settings
             settings.maxNumberOfSelections = maxImages
-            settings.thumb = thumb
+            settings.thumb = thumb.lowercased() == "thumb"
+            settings.hiddenThumb = thumb.lowercased() == "file"
             settings.selectType = selectType
             settings.doneButtonText = doneButtonText
 
@@ -333,19 +356,31 @@ public class SwiftMultiImagePickerPlugin: NSObject, FlutterPlugin, UIAlertViewDe
             let url = (arguments["url"] as? String) ?? ""
             result(cachedFilePath(url: URL(string: url)))
             break
+        case "cachedVideoDirectory":
+            let cacheDir = NSSearchPathForDirectoriesInDomains(FileManager.SearchPathDirectory.documentDirectory, FileManager.SearchPathDomainMask.userDomainMask, true).first?.appending("/KTVHTTPCache")
+            result(cacheDir)
+            break
+        case "deleteCacheVideo":
+            KTVHTTPCache.cacheDeleteAllCaches()
+            result(true)
         default:
             result(FlutterMethodNotImplemented)
         }
     }
     
-    private func cachedFileName(url : URL?) -> String {
-        return url?.absoluteString.md5.appending(url?.pathExtension ?? "") ?? ""
-    }
+//    private func cachedFileName(url : URL?) -> String {
+//        return url?.absoluteString.md5.appending(url?.pathExtension ?? "") ?? ""
+//    }
     
     private func cachedFilePath(url : URL?) -> String {
-        let fileName = url?.absoluteString.md5.appending(".\(url?.pathExtension ?? "")") ?? ""
-        let cacheDir = NSSearchPathForDirectoriesInDomains(FileManager.SearchPathDirectory.cachesDirectory, FileManager.SearchPathDomainMask.userDomainMask, true).first?.appending("/video")
-        return cacheDir?.appending("/\(fileName)") ?? "";
+//        let fileName = url?.absoluteString.md5.appending(".\(url?.pathExtension ?? "")") ?? ""
+//        let cacheDir = NSSearchPathForDirectoriesInDomains(FileManager.SearchPathDirectory.cachesDirectory, FileManager.SearchPathDomainMask.userDomainMask, true).first?.appending("/video")
+//        return cacheDir?.appending("/\(fileName)") ?? "";
+        if let _ = url {
+            let path = KTVHTTPCache.cacheCompleteFileURL(with: url)
+            return path?.path ?? "";
+        }
+        return ""
     }
     
     private func getThumbnailSize(originSize: CGSize) -> CGSize {
@@ -385,9 +420,5 @@ public class SwiftMultiImagePickerPlugin: NSObject, FlutterPlugin, UIAlertViewDe
             return UIColor.gray
         }
     
-    }
-    
-    public func alertView(_ alertView: UIAlertView, didDismissWithButtonIndex buttonIndex: Int) {
-        UIApplication.shared.openURL(URL(string: UIApplication.openSettingsURLString)!)
     }
 }

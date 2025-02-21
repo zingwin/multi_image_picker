@@ -11,12 +11,12 @@ import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.MediaStore;
+import android.text.TextUtils;
 import android.util.Pair;
 import android.util.Size;
 
 import com.hw.videoprocessor.VideoProcessor;
 import com.nemocdz.imagecompress.ImageCompress;
-import com.nemocdz.imagecompress.ImageCompressKt;
 import com.sangcomz.fishbun.bean.Media;
 
 import java.io.BufferedInputStream;
@@ -26,7 +26,6 @@ import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -46,6 +45,7 @@ public class MediaCompress {
     private static int MinVideoBitRate = 2 * 1024 * 1024;
     private static int MinVideoHeight = 640;
     private static int MinVideoWidth = 360;
+    private static int MAXPixel = 20000000;
     private boolean thumb = false;
     private List<Media> selectMedias = new ArrayList<>();
     private Context context;
@@ -163,23 +163,6 @@ public class MediaCompress {
             targetParentDir.mkdirs();
         }
         File targetPic = new File(cacheDir + imgName);
-        if (targetPic.exists()) {
-            BitmapFactory.Options options = new BitmapFactory.Options();
-            options.inJustDecodeBounds = true;
-            BitmapFactory.decodeFile(targetPic.getAbsolutePath(), options);
-            media.setThumbnailHeight(options.outHeight + "");
-            media.setThumbnailWidth(options.outWidth + "");
-            media.setThumbnailName(imgName);
-            media.setThumbnailPath(targetPic.getAbsolutePath());
-        }else {
-            File tmpPic = new File(cacheDir + imgName + "." + UUID.randomUUID().toString());
-            HashMap picInfo = localVideoThumb(media, tmpPic.getAbsolutePath());
-            moveFile(tmpPic, targetPic);
-            media.setThumbnailHeight((String) picInfo.get("height"));
-            media.setThumbnailWidth((String) picInfo.get("width"));
-            media.setThumbnailName(imgName);
-            media.setThumbnailPath(targetPic.getAbsolutePath());
-        }
         File targetVideo = new File(cacheDir + videoName);
         float width = Float.parseFloat(media.getThumbnailWidth());
         float height = Float.parseFloat(media.getThumbnailHeight());
@@ -213,6 +196,23 @@ public class MediaCompress {
                 info.put("errorCode", "1");
                 return info;
             }
+        }
+        if (targetPic.exists()) {
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(targetPic.getAbsolutePath(), options);
+            media.setThumbnailHeight(options.outHeight + "");
+            media.setThumbnailWidth(options.outWidth + "");
+            media.setThumbnailName(imgName);
+            media.setThumbnailPath(targetPic.getAbsolutePath());
+        }else {
+            File tmpPic = new File(cacheDir + imgName + "." + UUID.randomUUID().toString());
+            HashMap picInfo = localVideoThumb(targetVideo.getAbsolutePath(), tmpPic.getAbsolutePath());
+            moveFile(tmpPic, targetPic);
+            media.setThumbnailHeight((String) picInfo.get("height"));
+            media.setThumbnailWidth((String) picInfo.get("width"));
+            media.setThumbnailName(imgName);
+            media.setThumbnailPath(targetPic.getAbsolutePath());
         }
         HashMap info = new HashMap();
         info.put("identifier", media.getIdentifier());
@@ -272,14 +272,14 @@ public class MediaCompress {
         if (bitrate <= MinVideoBitRate)
             return bitrate;
         int result = MinVideoBitRate;
-         switch (quality) {
-             case VERY_LOW: result = (int) (bitrate * 0.08); break;
-             case LOW : result = (int) (bitrate * 0.10); break;
-             case MEDIUM : result = (int) (bitrate * 0.20); break;
-             case HIGH : result = (int) (bitrate * 0.30); break;
-             case VERY_HIGH : result = (int) (bitrate * 0.50); break;
-             default:
-                 return MinVideoBitRate;
+        switch (quality) {
+            case VERY_LOW: result = (int) (bitrate * 0.08); break;
+            case LOW : result = (int) (bitrate * 0.10); break;
+            case MEDIUM : result = (int) (bitrate * 0.20); break;
+            case HIGH : result = (int) (bitrate * 0.30); break;
+            case VERY_HIGH : result = (int) (bitrate * 0.50); break;
+            default:
+                return MinVideoBitRate;
         }
         return Math.max(MinVideoBitRate, result);
     }
@@ -295,7 +295,7 @@ public class MediaCompress {
                 e1.printStackTrace();
             }
         }
-        
+
         String cacheDir = context.getCacheDir().getAbsolutePath();
         String thumbPath = cacheDir + "/multi_image_pick/thumb/";
         if (media.getFileType().toLowerCase().contains("gif") || media.getOriginPath().toLowerCase().endsWith("gif")) {
@@ -318,7 +318,12 @@ public class MediaCompress {
                     byte[] resultFileByteArray = ImageCompress.INSTANCE.compressGifDataWithSampleCount(context, fileByteArray, 1);
                     if (tmpPic.exists()) tmpPic.delete();
                     tmpPic.createNewFile();
-                    fileByteArrayToFile(tmpPic.getAbsolutePath(), resultFileByteArray);
+                    //如果压缩之后图片反而大了，使用原图
+                    if(resultFileByteArray.length > fileByteArray.length){
+                        fileByteArrayToFile(tmpPic.getAbsolutePath(), fileByteArray);
+                    }else{
+                        fileByteArrayToFile(tmpPic.getAbsolutePath(), resultFileByteArray);
+                    }
 
                     byte[] checkFileByteArray = ImageCompress.INSTANCE.compressGifDataWithSampleCount(context, fileByteArray, 24);
                     if (checkPic.exists()) checkPic.delete();
@@ -373,12 +378,12 @@ public class MediaCompress {
                     float imageHeight = options.outHeight;
                     float imageWidth = options.outWidth;
                     float pixel = imageHeight * imageWidth;
-                    if (pixel > 100000000) {
-                        imageHeight = 100000000 / pixel * imageHeight;
-                        imageWidth = 100000000 / pixel * imageWidth;
+                    if (pixel > MAXPixel) {
+                        imageHeight = MAXPixel / pixel * imageHeight;
+                        imageWidth = MAXPixel / pixel * imageWidth;
                     }
                     if (thumb) {
-                        if (fileSize > 30 * 1024 * 1024 || pixel > 100000000) {
+                        if (fileSize > 30 * 1024 * 1024 || fileSize <= 300 * 1024 || pixel > MAXPixel) {
                             compressPicFile = compressImage(new File(media.getOriginPath()), tmpPic, imageWidth, imageHeight, 80);
                         }else {
                             List<File> compressPicFiles = Luban.with(context).load(media.getOriginPath()).ignoreBy(300).get();
@@ -451,6 +456,9 @@ public class MediaCompress {
             } else if (!oldFile.canRead()) {
                 return false;
             }
+            //如果目标文件存在，就不移动
+            if(newFile.exists()) return true;
+            if(oldFile.getAbsolutePath().equalsIgnoreCase(newFile.getAbsolutePath())) return true;
 
             FileInputStream fileInputStream = new FileInputStream(oldFile);    //读入原文件
             FileOutputStream fileOutputStream = new FileOutputStream(newFile);
@@ -470,6 +478,15 @@ public class MediaCompress {
     }
 
     public void moveFile(File oldFile, File newFile) {
+        //可能存在oldFile和newFile就是同一个文件，不操作
+        if(oldFile.getAbsolutePath().equalsIgnoreCase(newFile.getAbsolutePath())) return;
+
+        //如果目标文件存在，就不移动并且删除老文件
+        if(newFile.exists()) {
+            oldFile.delete();
+            return;
+        }
+
         if (!oldFile.renameTo(newFile)) {
             copyFile(oldFile, newFile);
             oldFile.delete();
@@ -507,10 +524,22 @@ public class MediaCompress {
         return bytes;
     }
 
-    private File compressImage(File fromFile, File toFile, double width, double height, int quality) {
+    private File compressImage(File fromFile, File toFile, double width, double height, int quality) throws Exception {
+        if (!fromFile.exists()) return toFile;
+        BitmapFactory.Options opts = new BitmapFactory.Options();
+        opts.inJustDecodeBounds = false;
+        opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
+        Bitmap bitmap = BitmapFactory.decodeFile(fromFile.getAbsolutePath(), opts);
+        if (bitmap == null) {
+            opts.inPreferredConfig = Bitmap.Config.RGB_565;
+            bitmap = BitmapFactory.decodeFile(fromFile.getAbsolutePath(), opts);
+        }
+        if (bitmap == null) {
+            opts.inPreferredConfig = Bitmap.Config.ARGB_4444;
+            bitmap = BitmapFactory.decodeFile(fromFile.getAbsolutePath(), opts);
+        }
+
         try {
-            InputStream is = new FileInputStream(fromFile);
-            Bitmap bitmap = BitmapFactory.decodeStream(is);
             ExifInterface ei = new ExifInterface(fromFile.getAbsolutePath());
             int orientation = ei.getAttributeInt(ExifInterface.TAG_ORIENTATION,
                     ExifInterface.ORIENTATION_UNDEFINED);
@@ -528,35 +557,45 @@ public class MediaCompress {
                 default:
                     break;
             }
+        }catch (Exception e) {
+            e.printStackTrace();
+        }
 
-            int bitmapWidth = bitmap.getWidth();
-            int bitmapHeight = bitmap.getHeight();
+        int bitmapWidth = bitmap.getWidth();
+        int bitmapHeight = bitmap.getHeight();
 
+        Bitmap resizeBitmap;
+        if ((-1 == width && -1 == height) || (height >= bitmapHeight && width >= bitmapWidth)) {
+            resizeBitmap = bitmap;
+        }else {
             float scaleWidth = -1 == width ? 1 : ((float) width / bitmapWidth);
             float scaleHeight = -1 == height ? 1 : ((float) height / bitmapHeight);
             float scale = scaleWidth > scaleHeight ? scaleHeight : scaleWidth;
             Matrix matrix = new Matrix();
             matrix.postScale(scale, scale);
-
-            Bitmap resizeBitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmapWidth, bitmapHeight, matrix, false);
-            if (toFile.exists()) toFile.delete();
-            FileOutputStream out = new FileOutputStream(toFile);
-            if(resizeBitmap.compress(Bitmap.CompressFormat.JPEG, quality, out)){
-                out.flush();
-                out.close();
-            }
-            if(!bitmap.isRecycled()){
-                bitmap.recycle();//记得释放资源，否则会内存溢出
-            }
-            if(!resizeBitmap.isRecycled()){
-                resizeBitmap.recycle();
-            }
-            is.close();
-        } catch (FileNotFoundException e) {
-            e.printStackTrace();
-        } catch (Exception ex) {
-            ex.printStackTrace();
+            resizeBitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmapWidth, bitmapHeight, matrix, false);
+            if(!bitmap.isRecycled()) bitmap.recycle();
         }
+
+        if (toFile.exists()) toFile.delete();
+
+        FileOutputStream out = new FileOutputStream(toFile);
+        try {
+            resizeBitmap.compress((!TextUtils.isEmpty(opts.outMimeType) && opts.outMimeType.toLowerCase().contains("png")) ? Bitmap.CompressFormat.PNG : Bitmap.CompressFormat.JPEG, quality, out);
+        }catch (Exception e) {
+            e.printStackTrace();
+            toFile.delete();
+        } finally {
+            out.flush();
+            out.close();
+        }
+//        处理图片原图大小不超过32MB、宽高不超过30000像素且总像素不超过2.5亿像素，
+//        处理结果图宽高设置不超过9999像素；针对动图，原图宽 x 高 x 帧数不超过2.5亿像素
+        if (!toFile.canRead() && fromFile.length() < 32 * 1024 * 1024) {
+            copyFile(fromFile, toFile);
+        }
+        if(resizeBitmap != null && !resizeBitmap.isRecycled()) resizeBitmap.recycle();
+
         return toFile;
     }
 
@@ -567,12 +606,12 @@ public class MediaCompress {
                 matrix, true);
     }
 
-    public HashMap localVideoThumb(Media media, String savePath) {
+    public HashMap localVideoThumb(String videoPath, String savePath) {
         HashMap result = new HashMap();
         Bitmap bitmap = null;
         MediaMetadataRetriever retriever = new MediaMetadataRetriever();
         try {
-            retriever.setDataSource(media.getOriginPath());
+            retriever.setDataSource(videoPath);
             bitmap = retriever.getFrameAtTime(0);
             File f = new File(savePath);
             FileOutputStream out = new FileOutputStream(f);
